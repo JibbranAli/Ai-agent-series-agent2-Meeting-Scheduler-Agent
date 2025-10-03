@@ -24,7 +24,9 @@ class Config:
             if os.path.exists(env_path):
                 try:
                     self._load_from_file(env_path)
-                    print(f"Configuration loaded from: {env_path}")
+                    # Only show config loading message in DEBUG mode
+                    if os.getenv('LOG_LEVEL', 'INFO') == 'DEBUG':
+                        print(f"Configuration loaded from: {env_path}")
                     return
                 except Exception as e:
                     print(f"Warning: Could not load config from {env_path}: {e}")

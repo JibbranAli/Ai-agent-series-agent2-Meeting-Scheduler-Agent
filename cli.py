@@ -6,12 +6,37 @@ Command Line Interface for Custom AI Agent Meeting Scheduler
 import sys
 import os
 import argparse
+import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
+
+# Suppress TensorFlow/Google library warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_LOG'] = 'ERROR'
+os.environ['GRPC_VERBOSITY'] = 'ERROR'
+os.environ['GLOG_log_level'] = '10'
+
+import warnings
+warnings.filterwarnings('ignore')
 
 from meeting_scheduler import CalendarAgent, create_sample_data
 from custom_ai_agent import ReasonableAgent, AgentMode
 from config import config
+
+# Load config first to set up logging
+config.load_env_file()
+
+# Configure logging based on config
+log_level = config.get_log_level()
+logging.basicConfig(
+    level=getattr(logging, log_level),
+    format='%(message)s',
+    force=True
+)
+
+# Suppress third-party library warnings
+logging.getLogger('absl').setLevel(logging.ERROR)
+logging.getLogger('grpc').setLevel(logging.ERROR)
 
 class MeetingSchedulerCLI:
     """Command Line Interface for the AI Meeting Scheduler"""
@@ -42,11 +67,13 @@ class MeetingSchedulerCLI:
             mode=agent_mode
         )
         
-        print(f"AI Agent initialized in {agent_mode.value.upper()} mode")
-        if api_key:
-            print("Enhanced AI features enabled with Gemini")
-        else:
-            print("Basic AI features (Gemini API key not configured)")
+        # Reduce verbosity unless in DEBUG mode
+        if config.get_log_level() == 'DEBUG':
+            print(f"AI Agent initialized in {agent_mode.value.upper()} mode")
+            if api_key:
+                print("Enhanced AI features enabled with Gemini")
+            else:
+                print("Basic AI features (Gemini API key not configured)")
     
     def get_agent_mode(self) -> str:
         """Get agent mode from config"""
@@ -238,7 +265,70 @@ class MeetingSchedulerCLI:
                     print(f"  {i}. {rec['time'].strftime('%Y-%m-%d %H:%M')}")
                     print(f"     Confidence: {rec['score']:.2f}")
                     print(f"     Reasoning: {rec.get('reasoning', 'Good alternative')}")
+                
+                # Offer to auto-schedule the top recommendation
+                if result.get('suggested_auto_schedule'):
+                    print(f"\nROBOT: Auto-Schedule Option:")
+                    print(f"   Recommended: {result['suggested_auto_schedule']['time'].strftime('%Y-%m-%d %H:%M')}")
+                    print(f"   Confidence: {result['suggested_auto_schedule']['score']:.2f}")
+                    print(f"   To auto-schedule: Use 'ai-schedule-auto' or change agent mode to AUTONOMOUS")
             
+            return False
+    
+    def ai_schedule_auto(self, request: str) -> bool:
+        """AI-powered scheduling with automatic booking"""
+        if not self.ai_agent:
+            print("AI agent not available")
+            return False
+            
+        print(f"Processing AI auto-schedule request: '{request}'")
+        
+        result = self.ai_agent.autonomous_schedule(request)
+        
+        if result['success']:
+            meeting = result['meeting']
+            print(f"\nSUCCESS: Meeting Auto-Scheduled!")
+            print(f"  Title: {meeting.title}")
+            print(f"  Time: {meeting.start_time.strftime('%Y-%m-%d %H:%M')}")
+            print(f"  Duration: {(meeting.end_time - meeting.start_time).seconds // 60} minutes")
+            print(f"  Participants: {meeting.participants or 'TBD'}")
+            print(f"  Location: {meeting.location or 'TBD'}")
+            return True
+        elif 'suggested_auto_schedule' in result and result['suggested_auto_schedule']:
+            # Auto-book the top recommendation if confidence > 0.8
+            auto_slot = result['suggested_auto_schedule']
+            if auto_slot['score'] > 0.8:
+                print(f"\nROBOT: Auto-booking high-confidence recommendation...")
+                
+                # Parse the request again to extract meeting details
+                parsed_request = self.ai_agent._enhanced_nlp_parse(request)
+                
+                success = self.basic_agent.schedule_meeting(
+                    title=parsed_request.get('title', 'AI Scheduled Meeting'),
+                    participants=parsed_request.get('participants', 'TBD'),
+                    start_time=auto_slot['time'],
+                    duration=parsed_request.get('duration', 60),
+                    location=parsed_request.get('location', 'TBD')
+                )
+                
+                if success['success']:
+                    meeting = success['meeting']
+                    print(f"SUCCESS: Meeting Auto-Scheduled!")
+                    print(f"  Title: {meeting.title}")
+                    print(f"  Time: {auto_slot['time'].strftime('%Y-%m-%d %H:%M')}")
+                    print(f"  Confidence: {auto_slot['score']:.2f}")
+                    return True
+                else:
+                    print(f"Failed to book recommended slot: {success.get('error')}")
+                    return False
+            else:
+                print(f"\nSuggested slot confidence too low ({auto_slot['score']:.2f})")
+                print("Available alternatives:")
+                for i, rec in enumerate(result['recommendations'][:3], 1):
+                    print(f"  {i}. {rec['time'].strftime('%Y-%m-%d %H:%M')} (score: {rec['score']:.2f})")
+                return False
+        else:
+            print(f"FAILED: {result.get('error', 'No suitable time slots found')}")
             return False
     
     def cancel_meeting(self, meeting_id: int) -> bool:
@@ -300,8 +390,9 @@ Examples:
   %(prog)s --config                     # Show configuration
   %(prog)s schedule "Team Meeting"     # Schedule basic meeting
   %(prog)s ai-schedule "Schedule urgent call with client tomorrow"
+  %(prog)s ai-schedule-auto "team meeting tomorrow"  # Auto-schedule
   %(prog)s view                        # View upcoming schedule
-  %(prog)s analyze                     # Run AI analysis
+  %(prog)s analyze                     # Run AI results
   %(prog)s stats                       # Show statistics
   %(prog)s cancel 1                    # Cancel meeting #1
         """
@@ -324,6 +415,10 @@ Examples:
     # AI schedule command
     ai_parser = subparsers.add_parser('ai-schedule', help='AI-powered natural language scheduling')
     ai_parser.add_argument('request', help='Natural language scheduling request')
+    
+    # AI auto-schedule command
+    auto_parser = subparsers.add_parser('ai-schedule-auto', help='AI-powered automatic scheduling')
+    auto_parser.add_argument('request', help='Natural language scheduling request')
     
     # View schedule command
     view_parser = subparsers.add_parser('view', help='View upcoming schedule')
@@ -383,6 +478,10 @@ Examples:
         
     elif args.command == 'ai-schedule':
         success = cli.ai_schedule(args.request)
+        sys.exit(0 if success else 1)
+        
+    elif args.command == 'ai-schedule-auto':
+        success = cli.ai_schedule_auto(args.request)
         sys.exit(0 if success else 1)
         
     elif args.command == 'view':

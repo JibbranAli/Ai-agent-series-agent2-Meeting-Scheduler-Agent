@@ -18,6 +18,7 @@ import logging
 from dataclasses import dataclass, asdict
 from enum import Enum
 import threading
+from dateutil import parser as date_parser
 import time
 
 # Enhanced logging for agent behavior
@@ -442,7 +443,10 @@ class ReasonableAgent:
         # Analyze multiple factors to score slots
         target_date = parsed_request.get('start_time')
         if isinstance(target_date, str):
-            target_date = parse_date(target_date)
+            try:
+                target_date = date_parser.parse(target_date).date()
+            except (ValueError, TypeError):
+                target_date = None
         
         # Score slots based on multiple criteria
         for day_offset in range(14):  # Check next 2 weeks
@@ -518,8 +522,15 @@ class ReasonableAgent:
         
         # Autonomous scheduling with high confidence
         if best_score > self.confidence_threshold:
-            parsed_request['start_time'] = best_slot
-            result = self.calendar_agent.schedule_meeting(**parsed_request)
+            # Clean the parsed request to only include valid Meeting parameters
+            clean_request = {
+                'title': parsed_request.get('title', 'AI Scheduled Meeting'),
+                'participants': parsed_request.get('participants', 'TBD'),
+                'start_time': best_slot,
+                'duration': parsed_request.get('duration', 60),
+                'location': parsed_request.get('location', 'TBD')
+            }
+            result = self.calendar_agent.schedule_meeting(**clean_request)
             
             if result['success']:
                 # Learn successful scheduling pattern
