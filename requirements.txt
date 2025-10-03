@@ -1,0 +1,22 @@
+# Core dependencies for Meeting Scheduler Agent
+pandas>=2.0.0
+sqlalchemy>=2.0.0
+python-dateutil>=2.8.2
+pytz>=2023.3
+
+# AI/LLM Integration
+google-generativeai>=0.3.0
+requests>=2.31.0
+
+# UI Framework (for Jupyter)
+ipywidgets>=8.0.0
+IPython>=8.0.0
+
+# Optional: Enhanced UI components
+rich>=13.0.0
+tabulate>=0.9.0
+
+# Development and testing
+pytest>=7.0.0
+jupyter>=1.0.0
+notebook>=7.0.0
