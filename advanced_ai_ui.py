@@ -560,7 +560,7 @@ class AdvancedAICalendarUI:
                 <div style="background: #f8f9fa; padding: 10px; border-radius: 5px;">
                     <strong>💾 Memory:</strong> {total_interactions + len(meetings)} patterns loaded<br>
                     <strong>🧠 Learning:</strong> Actively adapting<br>
-                    <strong>🎯 Success Rate:</strong> {self.ai_agent.insights.success_rate:.1%}
+                    <strong>🎯 Success Rate:</strong> {self.ai_agent.insights.successful_rate:.1%}
                 </div>
                 """
                 
@@ -895,7 +895,7 @@ class AdvancedAICalendarUI:
                 """))
                 
                 # Update success rate display
-                success_rate = self.ai_agent.insights.success_rate
+                success_rate = self.ai_agent.insights.successful_rate
                 self.confidence_gauge.value = success_rate
             
             learn_button.on_click(handle_learning)
@@ -910,7 +910,7 @@ class AdvancedAICalendarUI:
     def _update_memory_display(self):
         """Update memory indicator display"""
         total_interactions = len(self.ai_agent.memory.scheduling_history)
-        success_rate = self.ai_agent.insights.success_rate
+        success_rate = self.ai_agent.insights.successful_rate
         
         self.memory_indicator.value = f"""
         <div style="background: #f8f9fa; padding: 10px; border-radius: 5px;">

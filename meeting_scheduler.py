@@ -143,22 +143,22 @@ class GeminiIntegration:
         """
         Initialize Gemini integration
         Args:
-            api_key: Google Generative AI API key. If None, will look for GOOGLE_API_KEY env var
+            api_key: Google Generative AI API key. If None, will use hardcoded key
         """
-        self.api_key = api_key or os.getenv('GOOGLE_API_KEY')
+        # Hardcoded Gemini API key for Custom AI Agent
+        self.api_key = api_key or "AIzaSyA5w6gUBNgab_q04cQ6mh3KQjcwSvylwtc"
         self.client = None
+        self.model_name = "gemini-2.0-flash"
         
-        if self.api_key:
-            try:
-                # Note: Uncomment when google-generativeai is installed
-                # import google.generativeai as genai
-                # genai.configure(api_key=self.api_key)
-                # self.client = genai.GenerativeModel('gemini-pro')
-                logger.info("Gemini integration initialized successfully")
-            except ImportError:
-                logger.warning("google-generativeai not installed. LLM features disabled.")
-        else:
-            logger.warning("No Google API key provided. LLM features disabled.")
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=self.api_key)
+            self.client = genai.GenerativeModel(self.model_name)
+            logger.info(f"Gemini {self.model_name} integration initialized successfully")
+        except ImportError:
+            logger.warning("google-generativeai not installed. LLM features disabled.")
+        except Exception as e:
+            logger.warning(f"Gemini initialization failed: {e}. LLM features disabled.")
     
     def parse_schedule_request(self, request: str) -> Dict:
         """
@@ -170,26 +170,46 @@ class GeminiIntegration:
         
         try:
             prompt = f"""
-            Parse this meeting scheduling request into structured data:
+            Parse this meeting scheduling request into structured JSON:
             "{request}"
             
-            Return a JSON object with these fields:
-            - title: Meeting title/subject
-            - participants: List of participants (extract names)
-            - start_time: ISO datetime format
-            - duration: Duration in minutes
-            - location: Meeting location if mentioned
-            - recurring: Boolean if it's recurring
-            - recurring_pattern: Pattern if recurring (weekly, biweekly, monthly)
+            Extract and return ONLY a valid JSON object with these exact fields:
+            {{
+                "title": "Meeting title or subject",
+                "participants": "Comma-separated participant names",
+                "start_time": "YYYY-MM-DD HH:MM format or null",
+                "duration": "Duration in minutes as integer",
+                "location": "Meeting location or empty string",
+                "recurring": false,
+                "recurring_pattern": ""
+            }}
             
-            If any field cannot be determined, use null.
+            Rules:
+            - If time not specified, use null for start_time
+            - Extract participant names accurately
+            - Default duration to 60 if not specified
+            - Return ONLY the JSON, no other text
             """
             
-            # response = self.client.generate_content(prompt)
-            # parsed_data = json.loads(response.text)
-            
-            # Placeholder for when Gemini is available
-            return self._fallback_parse(request)
+            if self.client:
+                response = self.client.generate_content(prompt)
+                response_text = response.text.strip()
+                
+                # Clean up response to extract JSON
+                if "```json" in response_text:
+                    response_text = response_text.split("```json")[1].split("```")[0]
+                elif "```" in response_text:
+                    response_text = response_text.split("```")[1]
+                
+                try:
+                    parsed_data = json.loads(response_text)
+                    logger.info(f"Gemini parsed request: {request[:50]}...")
+                    return parsed_data
+                except json.JSONDecodeError:
+                    logger.warning(f"Failed to parse Gemini JSON: {response_text[:100]}")
+                    return self._fallback_parse(request)
+            else:
+                return self._fallback_parse(request)
             
         except Exception as e:
             logger.error(f"Error parsing with Gemini: {e}")
@@ -221,17 +241,24 @@ class GeminiIntegration:
         
         try:
             prompt = f"""
-            Generate a polite email message for rescheduling a meeting.
+            Generate a concise, professional email message for rescheduling a meeting.
+            
             Original time: {original_time}
             Suggested alternatives: {', '.join(suggested_times[:3])}
             
-            Keep it professional and concise.
+            Format:
+            Subject: [Meeting Reschedule Request]
+            
+            Body: Brief, polite message.
+            
+            Keep it professional, concise, and friendly.
             """
             
-            # response = self.client.generate_content(prompt)
-            # return response.text
-            
-            return self._fallback_reschedule_message(original_time, suggested_times)
+            if self.client:
+                response = self.client.generate_content(prompt)
+                return response.text.strip()
+            else:
+                return self._fallback_reschedule_message(original_time, suggested_times)
             
         except Exception as e:
             logger.error(f"Error generating reschedule message: {e}")

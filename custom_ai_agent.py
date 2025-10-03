@@ -60,7 +60,7 @@ class ContextualInsights:
     meeting_type_preferences: Dict[str, Dict]
     location_preferences: Dict[str, float]
     conflict_resolution_history: List[Dict]
-    success_rate: float
+    successful_rate: float
 
 class ReasonableAgent:
     """
@@ -190,7 +190,7 @@ class ReasonableAgent:
             
             for meeting in meetings:
                 if meeting.start_time.date() == day:
-                    start_hour = meet.start_time.hour
+                    start_hour = meeting.start_time.hour
                     end_hour = meeting.end_time.hour
                     busy_hours.update(range(start_hour, end_hour + 1))
             
@@ -213,7 +213,7 @@ class ReasonableAgent:
         busy_hours = 0
         total_slots = 0
         
-        for meet in meetings:
+        for meeting in meetings:
             duration_hours = (meeting.end_time - meeting.start_time).total_seconds() / 3600
             busy_hours += duration_hours
             total_slots += duration_hours
@@ -229,7 +229,11 @@ class ReasonableAgent:
         meetings = self.calendar_agent.db_manager.get_meetings()
         
         if len(meetings) < 5:
-            return {'morning_preference': 0.5, 'afternoon_preference': 0.5}
+            return {
+                'preferred_time_of_day': 'morning',
+                'most_common_day': 'Friday', 
+                'average_duration': 1
+            }
             
         # Analyze timing preferences
         morning_meetings = len([m for m in meetings if m.start_time.hour < 12])
@@ -247,8 +251,10 @@ class ReasonableAgent:
             day_counts[day] = day_counts.get(day, 0) + 1
             
         most_common_day = max(day_counts.items(), key=lambda x: x[1])[0] if day_counts else 'Friday'
+        preferred_time = 'morning' if circular_preferences['morning_preference'] > 0.5 else 'afternoon'
+        
         optimal_patterns = {
-            'preferred_time_of_day': 'morning' if circular_preferences['morning_preference'] > 0.5 else 'afternoon',
+            'preferred_time_of_day': preferred_time,
             'most_common_day': most_common_day,
             'average_duration': sum((m.end_time - m.start_time).total_seconds() / 3600 for m in meetings) / len(meetings) if meetings else 1
         }
@@ -257,21 +263,23 @@ class ReasonableAgent:
     
     def _analyze_user_mood(self) -> Dict[str, float]:
         """Analyze user mood and stress indicators from scheduling patterns"""
-        recent_meetings = self.calendar_agent.db_manager.get_meetings()
-        recent_meetings = [m for m in recent_meetings if m.created_at > datetime.now() - timedelta(days=7)]
+        all_meetings = self.calendar_agent.db_manager.get_meetings()
+        recent_meetings = [m for m in all_meetings if m.created_at > datetime.now() - timedelta(days=7)]
         
         if len(recent_meetings) < 3:
             return {'stress_level': 0.3, 'productivity_indicator': 0.7, 'balance_score': 0.6}
             
         # Analyze indicators
         cancelations = len([m for m in recent_meetings if 'cancel' in m.title.lower()])
-        urgent_meetings = len([m for m in recent_meetings if 'urgent' in m.description.lower() if m.description])
+        urgent_meetings = len([m for m in recent_meetings if m.description and 'urgent' in m.description.lower()])
         long_meetings = len([m for m in recent_meetings if (m.end_time - m.start_time).total_seconds() > 7200])  # >2 hours
         
+        stress_level = min((cancelations + urgent_meetings + long_meetings) / len(recent_meetings), 1.0)
+        
         stress_indicators = {
-            'stress_level': min((cancelations + urgent_meetings + long_meetings) / len(recent_meetings), 1.0),
+            'stress_level': stress_level,
             'productivity_indicator': 1.0 - min((cancelations / max(len(recent_meetings), 1)) * 2, 1.0),
-            'balance_score': max(0.0, 1.0 - (stress_indicators.get('stress_level', 0) * 0.5))
+            'balance_score': max(0.0, 1.0 - (stress_level * 0.5))
         }
         
         logger.info(f"😊 Mood analysis: stress={stress_indicators['stress_level']:.2f}, productivity={stress_indicators['productivity_indicator']:.2f}")
@@ -528,7 +536,8 @@ class ReasonableAgent:
         
         return {
             'success': False,
-            'error': 'Confidence too low for autonomous scheduling<｜tool▁call▁begin｜>agent_action': 'REQUEST_CONFIRMATION',
+            'error': 'Confidence too low for autonomous scheduling',
+            'agent_action': 'REQUEST_CONFIRMATION',
             'suggestions': optimal_slots,
             'recommended_slot': optimal_slots[0]
         }
@@ -617,7 +626,7 @@ class ReasonableAgent:
         
         if recent_patterns:
             success_rate = len([p for p in recent_patterns if p.get('user_feedback_score', 0) > 0.5]) / len(recent_patterns)
-            self.insights.success_rate = success_rate
+            self.insights.successful_rate = success_rate
             
         # Save updated insights
         self._save_insights()
@@ -700,7 +709,7 @@ class ReasonableAgent:
             suggestions.append("Consider scheduling more meetings in your preferred morning slots")
             suggestions.append("Reduce meeting duration by 15 minutes for better productivity")
         
-        if patterns['morning_preference'] > 0.6:
+        if patterns.get('preferred_time_of_day') == 'morning':
             suggestions.append("You tend to prefer mornings - consider scheduling more early meetings")
         
         # Check for optimization opportunities
@@ -744,7 +753,7 @@ class ReasonableAgent:
                 'last_interaction': self.memory.last_interaction.isoformat()
             },
             'insights': {
-                'success_rate': self.insights.success_rate,
+                'success_rate': self.insights.successful_rate,
                 'schedule_density': self.insights.user_schedule_density,
                 'optimal_patterns': self._find_optimal_timing_patterns(),
                 'calendar_stress': self._calculate_calendar_stress()
